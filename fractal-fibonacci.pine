@@ -1,0 +1,377 @@
+//@version=6
+// ══════════════════════════════════════════════════════════════════════════════
+//  Fractal Fibonacci
+//
+//  Author   : Meta Program Labs
+//  GitHub   : https://github.com/Metaprogramlabs
+//  Telegram : https://t.me/Metaprogramlabs
+//
+//  © 2026 Meta Program Labs. All rights reserved.
+//
+//  The source code is published for viewing and for personal, non-commercial
+//  use on your own TradingView account only. Copying, modification,
+//  redistribution, republishing (including on TradingView or any other
+//  platform) and commercial use are prohibited without prior written
+//  permission of the author. See the LICENSE file in the repository.
+// ══════════════════════════════════════════════════════════════════════════════
+indicator('Fractal Fibonacci', overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 4000)
+
+max_bars_back(time, 4000)
+max_bars_back(high, 4000)
+max_bars_back(low, 4000)
+max_bars_back(close, 4000)
+max_bars_back(open, 4000)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+g_fractals = 'Fractals ━━━━━━━━━━━━━━━━━━━━━━━━'
+g_fibo     = 'Fibonacci Levels ━━━━━━━━━━━━━━━━'
+g_lvl0     = 'Level 0 ━━━━━━━━━━━━━━━━━━━━━━━━━'
+g_lvl50    = 'Level 0.5 ━━━━━━━━━━━━━━━━━━━━━━━'
+g_lvl100   = 'Level 1 ━━━━━━━━━━━━━━━━━━━━━━━━━'
+g_labels   = 'Labels ━━━━━━━━━━━━━━━━━━━━━━━━━'
+g_fvg      = 'Imbalances (FVG) ━━━━━━━━━━━━━━━━'
+
+showFractals   = input.bool(true, 'Show fractals', group = g_fractals)
+fractalPeriods = input.int(2, 'Fractal periods', minval = 2, maxval = 10, group = g_fractals)
+fractalBars    = input.string('5', '3 or 5 bar fractal', options = ['3', '5'], group = g_fractals)
+
+showFibo = input.bool(true, 'Show Fibonacci levels', group = g_fibo)
+
+// Level 0 (default: gray, solid, width 1)
+fibo0Color = input.color(color.new(color.gray, 0), 'Color', inline = 'a0', group = g_lvl0)
+fibo0Width = input.int(1, 'Width', minval = 1, maxval = 5, inline = 'b0', group = g_lvl0)
+fibo0Style = input.string('Solid', 'Style', options = ['Solid', 'Dashed', 'Dotted'], inline = 'b0', group = g_lvl0)
+
+// Level 0.5 (default: red, dashed, width 1)
+fibo50Color = input.color(color.new(color.red, 0), 'Color', inline = 'a50', group = g_lvl50)
+fibo50Width = input.int(1, 'Width', minval = 1, maxval = 5, inline = 'b50', group = g_lvl50)
+fibo50Style = input.string('Dashed', 'Style', options = ['Solid', 'Dashed', 'Dotted'], inline = 'b50', group = g_lvl50)
+
+// Level 1 (default: gray, solid, width 1)
+fibo100Color = input.color(color.new(color.gray, 0), 'Color', inline = 'a100', group = g_lvl100)
+fibo100Width = input.int(1, 'Width', minval = 1, maxval = 5, inline = 'b100', group = g_lvl100)
+fibo100Style = input.string('Solid', 'Style', options = ['Solid', 'Dashed', 'Dotted'], inline = 'b100', group = g_lvl100)
+
+fiboLabelSize   = input.string('small', 'Label size', options = ['tiny', 'small', 'normal', 'large', 'huge'], group = g_labels)
+fiboLabelOffset = input.int(0, 'Label offset (bars)', minval = 0, maxval = 50, group = g_labels)
+
+showImbalances = input.bool(true, 'Show imbalances (FVG)', group = g_fvg)
+imbalanceCount = input.int(5, 'Number of imbalances', minval = 1, maxval = 20, group = g_fvg)
+fvgColor       = input.color(color.new(color.blue, 85), 'Imbalance (FVG) color', group = g_fvg)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRACTALS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Classic Bill Williams definition: the bar `n` bars back is a fractal when its extreme
+// is strictly beyond the extremes of `wing` bars on each side of it
+// (wing = 2 for a 5-bar fractal, wing = 1 for a 3-bar fractal).
+// A fractal is therefore confirmed `n` bars after it forms.
+n = fractalPeriods
+wing = fractalBars == '5' ? 2 : 1
+
+isFractal(float src, bool topSide) =>
+    float mid = src[n]
+    bool valid = not na(mid)
+    for k = 1 to wing
+        float before = src[n - k]
+        float after = src[n + k]
+        valid := valid and (topSide ? (before < mid and after < mid) : (before > mid and after > mid))
+    valid
+
+swingHighFound = isFractal(high, true)
+swingLowFound = isFractal(low, false)
+
+// Mark the fractals on the bar where they formed
+plotshape(showFractals and swingHighFound, 'Fractal high', shape.triangledown, location.abovebar, color.new(color.gray, 0), offset = -n)
+plotshape(showFractals and swingLowFound, 'Fractal low', shape.triangleup, location.belowbar, color.new(color.gray, 0), offset = -n)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEALING RANGE - last 4 fractals (2 highs, 2 lows)
+// ═══════════════════════════════════════════════════════════════════════════════
+type FractalPoint
+    float price
+    int bar_index
+
+type FractalData
+    float price
+    int bar_idx
+    bool is_high
+
+type FractalWithNumber
+    float price
+    int bar_idx
+    bool is_high
+
+var array<FractalWithNumber> all_fractals_numbered = array.new<FractalWithNumber>()
+
+type DRHistory
+    int high_idx
+    int low_idx
+    float high_price
+    float low_price
+    int high_bar
+    int low_bar
+
+// Current active DR (stores values, not indexes)
+var float dr_high_price = na
+var int dr_high_bar = na
+var float dr_low_price = na
+var int dr_low_bar = na
+var bool dr_initialized = false
+
+// DR history (last 6)
+var array<DRHistory> dr_history = array.new<DRHistory>()
+
+if swingLowFound
+    // Add to the single array of all fractals
+    new_frac = FractalWithNumber.new()
+    new_frac.price := low[n]
+    new_frac.bar_idx := bar_index - n
+    new_frac.is_high := false
+    array.unshift(all_fractals_numbered, new_frac)
+    
+    // Limit the array size
+    if array.size(all_fractals_numbered) > 20
+        array.pop(all_fractals_numbered)
+
+if swingHighFound
+    // Add to the single array of all fractals
+    new_frac = FractalWithNumber.new()
+    new_frac.price := high[n]
+    new_frac.bar_idx := bar_index - n
+    new_frac.is_high := true
+    array.unshift(all_fractals_numbered, new_frac)
+    
+    // Limit the array size
+    if array.size(all_fractals_numbered) > 20
+        array.pop(all_fractals_numbered)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIBONACCI LEVELS - between the highest and lowest of the last 4 fractals
+// ═══════════════════════════════════════════════════════════════════════════════
+var line fibo_0_line = na
+var line fibo_50_line = na
+var line fibo_100_line = na
+var label fibo_0_label = na
+var label fibo_50_label = na
+var label fibo_100_label = na
+
+// Convert the size string to a constant
+labelSize = fiboLabelSize == 'tiny' ? size.tiny : fiboLabelSize == 'small' ? size.small : fiboLabelSize == 'normal' ? size.normal : fiboLabelSize == 'large' ? size.large : size.huge
+
+// Convert style strings to constants
+line0Style = fibo0Style == 'Solid' ? line.style_solid : fibo0Style == 'Dashed' ? line.style_dashed : line.style_dotted
+line50Style = fibo50Style == 'Solid' ? line.style_solid : fibo50Style == 'Dashed' ? line.style_dashed : line.style_dotted
+line100Style = fibo100Style == 'Solid' ? line.style_solid : fibo100Style == 'Dashed' ? line.style_dashed : line.style_dotted
+
+// Determine the DR using the correct logic
+if swingLowFound or swingHighFound
+    total = array.size(all_fractals_numbered)
+    
+    // Initialization: at least 3 fractals are required
+    if not dr_initialized and total >= 3
+        // Take the 2nd and 3rd fractals from the end
+        f2 = array.get(all_fractals_numbered, total - 2)
+        f3 = array.get(all_fractals_numbered, total - 3)
+        
+        // Define the DR boundaries by price
+        if f2.price > f3.price
+            dr_high_price := f2.price
+            dr_high_bar := f2.bar_idx
+            dr_low_price := f3.price
+            dr_low_bar := f3.bar_idx
+        else
+            dr_high_price := f3.price
+            dr_high_bar := f3.bar_idx
+            dr_low_price := f2.price
+            dr_low_bar := f2.bar_idx
+        
+        dr_initialized := true
+    
+    // Update the DR on a new fractal
+    if dr_initialized and total >= 1
+        new_frac = array.get(all_fractals_numbered, 0)
+        
+        // If the new fractal breaks the current DR
+        if new_frac.is_high and new_frac.price > dr_high_price
+            // Break up - find the NEWEST low fractal inside the old DR
+            // (closest to the break in time)
+            float new_low_price = dr_low_price
+            int new_low_bar = dr_low_bar
+            
+            for i = 0 to total - 1
+                f = array.get(all_fractals_numbered, i)
+                // Look for a low fractal that is: 1) inside the DR by price, 2) newer than the current lower boundary
+                if not f.is_high and f.price >= dr_low_price and f.price <= dr_high_price and f.bar_idx > dr_low_bar
+                    new_low_price := f.price
+                    new_low_bar := f.bar_idx
+                    break
+            
+            // Save the old DR to history
+            new_dr = DRHistory.new()
+            new_dr.high_idx := 0
+            new_dr.low_idx := 0
+            new_dr.high_price := dr_high_price
+            new_dr.low_price := dr_low_price
+            new_dr.high_bar := dr_high_bar
+            new_dr.low_bar := dr_low_bar
+            array.unshift(dr_history, new_dr)
+            if array.size(dr_history) > 6
+                array.pop(dr_history)
+            
+            // Update the current DR
+            dr_low_price := new_low_price
+            dr_low_bar := new_low_bar
+            dr_high_price := new_frac.price
+            dr_high_bar := new_frac.bar_idx
+            
+        else if not new_frac.is_high and new_frac.price < dr_low_price
+            // Break down - find the NEWEST high fractal inside the old DR
+            // (closest to the break in time)
+            float new_high_price = dr_high_price
+            int new_high_bar = dr_high_bar
+            
+            for i = 0 to total - 1
+                f = array.get(all_fractals_numbered, i)
+                // Look for a high fractal that is: 1) inside the DR by price, 2) newer than the current upper boundary
+                if f.is_high and f.price <= dr_high_price and f.price >= dr_low_price and f.bar_idx > dr_high_bar
+                    new_high_price := f.price
+                    new_high_bar := f.bar_idx
+                    break
+            
+            // Save the old DR to history
+            new_dr = DRHistory.new()
+            new_dr.high_idx := 0
+            new_dr.low_idx := 0
+            new_dr.high_price := dr_high_price
+            new_dr.low_price := dr_low_price
+            new_dr.high_bar := dr_high_bar
+            new_dr.low_bar := dr_low_bar
+            array.unshift(dr_history, new_dr)
+            if array.size(dr_history) > 6
+                array.pop(dr_history)
+            
+            // Update the current DR
+            dr_high_price := new_high_price
+            dr_high_bar := new_high_bar
+            dr_low_price := new_frac.price
+            dr_low_bar := new_frac.bar_idx
+
+// Draw the DR lines and labels
+var array<line> dr_lines = array.new<line>()
+var array<label> dr_labels = array.new<label>()
+
+// Create lines on a new fractal
+if showFibo and (swingLowFound or swingHighFound)
+    // Delete old lines and labels
+    if array.size(dr_lines) > 0
+        for i = 0 to array.size(dr_lines) - 1
+            line.delete(array.get(dr_lines, i))
+        array.clear(dr_lines)
+    
+    if array.size(dr_labels) > 0
+        for i = 0 to array.size(dr_labels) - 1
+            label.delete(array.get(dr_labels, i))
+        array.clear(dr_labels)
+    
+    // Draw only the current DR
+    if dr_initialized
+        fibo_high = dr_high_price
+        fibo_low = dr_low_price
+        fibo_50 = (fibo_high + fibo_low) / 2
+        
+        start_bar_raw = math.min(dr_high_bar, dr_low_bar)
+        start_bar_safe = math.max(start_bar_raw, bar_index - 500)
+        
+        // Draw lines up to the current bar using the style and width settings
+        array.push(dr_lines, line.new(start_bar_safe, fibo_low, bar_index, fibo_low, color = fibo0Color, width = fibo0Width, style = line0Style))
+        array.push(dr_lines, line.new(start_bar_safe, fibo_50, bar_index, fibo_50, color = fibo50Color, width = fibo50Width, style = line50Style))
+        array.push(dr_lines, line.new(start_bar_safe, fibo_high, bar_index, fibo_high, color = fibo100Color, width = fibo100Width, style = line100Style))
+        
+        label_x = bar_index + fiboLabelOffset
+        
+        // Labels follow price position: 0 = range low (Discount), 0.5 = middle (Equilibrium), 1 = range high (Premium)
+        array.push(dr_labels, label.new(label_x, fibo_low, '0 (Discount)', color = fibo0Color, textcolor = color.white, size = labelSize, style = label.style_label_left))
+        array.push(dr_labels, label.new(label_x, fibo_50, '0.5 (Equilibrium)', color = fibo50Color, textcolor = color.white, size = labelSize, style = label.style_label_left))
+        array.push(dr_labels, label.new(label_x, fibo_high, '1 (Premium)', color = fibo100Color, textcolor = color.white, size = labelSize, style = label.style_label_left))
+
+// Extend lines and update labels on every bar
+if showFibo and array.size(dr_lines) > 0
+    for i = 0 to array.size(dr_lines) - 1
+        line.set_x2(array.get(dr_lines, i), bar_index)
+    
+    if array.size(dr_labels) > 0
+        for i = 0 to array.size(dr_labels) - 1
+            label.set_x(array.get(dr_labels, i), bar_index + fiboLabelOffset)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IMBALANCES (FVG - Fair Value Gap)
+// ═══════════════════════════════════════════════════════════════════════════════
+type ImbalanceBox
+    box fvg_box
+    float top
+    float bottom
+    bool is_bullish
+    bool mitigated
+
+var array<ImbalanceBox> imbalance_array = array.new<ImbalanceBox>()
+
+// Bullish FVG: gap up between candle [2] and the current one
+bullish_imbalance = low > high[2]
+
+// Bearish FVG: gap down between candle [2] and the current one
+bearish_imbalance = high < low[2]
+
+if bullish_imbalance and showImbalances
+    imb_top = low
+    imb_bottom = high[2]
+    
+    new_imb = ImbalanceBox.new()
+    new_imb.fvg_box := box.new(bar_index[2], imb_bottom, bar_index, imb_top, border_color = na, bgcolor = fvgColor)
+    new_imb.top := imb_top
+    new_imb.bottom := imb_bottom
+    new_imb.is_bullish := true
+    new_imb.mitigated := false
+    
+    array.unshift(imbalance_array, new_imb)
+    
+    if array.size(imbalance_array) > imbalanceCount
+        old_imb = array.pop(imbalance_array)
+        if not na(old_imb.fvg_box)
+            box.delete(old_imb.fvg_box)
+
+if bearish_imbalance and showImbalances
+    imb_top = low[2]
+    imb_bottom = high
+    
+    new_imb = ImbalanceBox.new()
+    new_imb.fvg_box := box.new(bar_index[2], imb_bottom, bar_index, imb_top, border_color = na, bgcolor = fvgColor)
+    new_imb.top := imb_top
+    new_imb.bottom := imb_bottom
+    new_imb.is_bullish := false
+    new_imb.mitigated := false
+    
+    array.unshift(imbalance_array, new_imb)
+    
+    if array.size(imbalance_array) > imbalanceCount
+        old_imb = array.pop(imbalance_array)
+        if not na(old_imb.fvg_box)
+            box.delete(old_imb.fvg_box)
+
+// Update imbalances (extend and check mitigation)
+if showImbalances and array.size(imbalance_array) > 0
+    for i = 0 to array.size(imbalance_array) - 1
+        imb = array.get(imbalance_array, i)
+        
+        if not imb.mitigated
+            // Check mitigation (price entered the imbalance)
+            if imb.is_bullish
+                imb.mitigated := low <= imb.bottom
+            else
+                imb.mitigated := high >= imb.top
+            
+            // Extend the box to the current candle
+            if not na(imb.fvg_box)
+                box.set_right(imb.fvg_box, bar_index)
